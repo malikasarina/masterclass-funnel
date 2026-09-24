@@ -1,3 +1,7 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Воронка мастер-классов</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -136,6 +140,29 @@ svg{display:block;width:100%;height:auto;max-width:100%}
   transition:opacity .12s;z-index:5}
 .tip.on{opacity:1}
 
+/* ---------- cohorts ---------- */
+.cohortwrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+table.cohort{min-width:760px}
+table.cohort th,table.cohort td{padding:8px 10px}
+table.cohort thead th{cursor:default;white-space:normal;vertical-align:bottom;line-height:1.3}
+table.cohort thead th:hover{color:var(--ink-3)}
+table.cohort th.r,table.cohort td.r{text-align:right}
+table.cohort td.cw{font-family:var(--mono);color:var(--ink);font-size:12px}
+table.cohort td.cw em{font-style:normal;display:block;font-size:10px;color:var(--ink-3)}
+table.cohort td.heat{padding:3px 2px}
+table.cohort td.cw,table.cohort thead th:first-child{position:sticky;left:0;z-index:3;background:var(--surface)}
+table.cohort thead th:first-child{background:var(--surface-2)}
+.cell{display:block;font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums;text-align:center;
+  border-radius:4px;padding:7px 4px;color:var(--ink);cursor:default}
+.cell.dark{color:var(--surface)}
+table.cohort tr.partial td:not(.cw){opacity:.62}
+table.cohort tr.partial td.cw{color:var(--ink-3)}
+table.cohort tr.total td{border-top:2px solid var(--line-2);font-weight:500}
+.legend-seq{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-top:12px;flex-wrap:wrap}
+.legend-seq .ramp{width:120px;height:8px;border-radius:4px;
+  background:linear-gradient(90deg,color-mix(in oklab,var(--accent) 6%,var(--surface)),var(--accent))}
+.cohort-note{font-size:12.5px;color:var(--ink-3);margin:12px 0 0;max-width:80ch}
+
 /* ---------- json explorer ---------- */
 .api{display:grid;grid-template-columns:262px 1fr;gap:16px}
 @media(max-width:800px){.api{grid-template-columns:1fr}}
@@ -242,6 +269,21 @@ footer{color:var(--ink-3);font-size:12px;border-top:1px solid var(--line);paddin
       <div style="font-size:12.5px;color:var(--ink-3)" id="total-note">—</div></div>
     <div class="big" id="total-cr">—</div>
   </div>
+</section>
+
+<section class="panel">
+  <div class="sechead">
+    <h2>Когорты по неделе первого визита</h2>
+    <p>Пользователи сгруппированы по неделе первого <span class="label" style="font-size:11px">catalog_view</span>.
+      В ячейке — доля когорты, дошедшая до шага. Наведите на ячейку.</p>
+  </div>
+  <div class="chartwrap">
+    <div class="cohortwrap"><table class="cohort" id="cohort"></table></div>
+    <div class="tip" id="ctip"></div>
+  </div>
+  <div class="legend-seq"><span>0%</span><span class="ramp"></span><span>100% когорты</span>
+    <span style="margin-left:12px">бледная строка — неполная неделя</span></div>
+  <p class="cohort-note" id="cohort-note"></p>
 </section>
 
 <div class="cols">
@@ -531,6 +573,56 @@ function renderChart(users){
   el.addEventListener("mouseleave",()=>tip.classList.remove("on"));
 }
 
+/* ---- когорты по неделям ---- */
+const weekStart = ts => { const d = new Date(ts.slice(0,10)+"T00:00:00Z");
+  d.setUTCDate(d.getUTCDate()-((d.getUTCDay()+6)%7)); return d.toISOString().slice(0,10); };
+const PILOT_END = "2026-08-03";
+const fweek = w => { const a = new Date(w+"T00:00:00Z"), b = new Date(a.getTime()+6*864e5);
+  const o = {day:"numeric",month:"short",timeZone:"UTC"};
+  return a.toLocaleDateString("ru-RU",o)+" — "+b.toLocaleDateString("ru-RU",o); };
+function renderCohorts(users){
+  const by = new Map();
+  for(const u of users){ const w = weekStart(u.first); if(!by.has(w)) by.set(w,[]); by.get(w).push(u); }
+  const weeks = [...by.keys()].sort();
+  const row = (us)=>{
+    const n = us.length;
+    const steps = STEPS.slice(1).map(s=>{ const c = us.filter(u=>u.reached.has(s.ev)).length; return {c,p:pct(c,n)}; });
+    const tried = us.filter(u=>u.reached.has("payment_initiated")).length;
+    const fail = us.filter(u=>u.reached.has("payment_failed")).length;
+    return {n, steps, rev: us.reduce((a,u)=>a+u.amount,0), tried, fail};
+  };
+  const cell = (st,label,n)=>{
+    const a = Math.round(6+st.p*0.94);
+    return `<td class="heat"><span class="cell${a>52?" dark":""}" style="background:color-mix(in oklab,var(--accent) ${a}%,var(--surface))"
+      data-tip="${label} · ${nf.format(st.c)} из ${nf.format(n)}">${n?fpct(st.p):"—"}</span></td>`;
+  };
+  const head = `<thead><tr><th>Неделя первого визита</th><th class="r">Размер</th>`
+    + STEPS.slice(1).map((s,i)=>`<th style="text-align:center">${i+2}. ${s.name.split(" · ")[0]}</th>`).join("")
+    + `<th class="r">Выручка, ₸</th><th class="r">Сбои оплаты</th></tr></thead>`;
+  const line = (label,sub,r,cls)=>`<tr class="${cls||""}"><td class="cw">${label}${sub?`<em>${sub}</em>`:""}</td>
+    <td class="num">${nf.format(r.n)}</td>${r.steps.map((st,i)=>cell(st,STEPS[i+1].name,r.n)).join("")}
+    <td class="num">${nf.format(r.rev)}</td><td class="num">${r.tried?fpct(pct(r.fail,r.tried)):"—"}</td></tr>`;
+  const body = weeks.map(w=>{ const partial = w===PILOT_END;
+    return line(partial ? fdate(w+"T12:00:00") : fweek(w), partial ? "неполная неделя: 1 день пилота" : "", row(by.get(w)), partial?"partial":""); }).join("");
+  const tot = row(users);
+  document.getElementById("cohort").innerHTML = weeks.length
+    ? head+"<tbody>"+body+line("Все когорты","",tot,"total")+"</tbody>"
+    : '<tbody><tr><td><div class="empty">Нет данных в выборке</div></td></tr></tbody>';
+  const full = weeks.filter(w=>w!==PILOT_END && by.get(w).length>=20).map(w=>({w,r:row(by.get(w))}));
+  const note = document.getElementById("cohort-note");
+  if(full.length>=2){
+    const paid = full.map(x=>x.r.steps[4].p), lo = Math.min(...paid), hi = Math.max(...paid);
+    note.textContent = `Сквозная конверсия полных недель — от ${fpct(lo)} до ${fpct(hi)}: разброс ${fpct(hi-lo).replace("%"," п.п.")} `
+      + (hi-lo<5 ? "Воронка стабильна от недели к неделе — потери системные (форма брони, оплата), а не эффект отдельной недели или кампании."
+                 : "Разброс заметный — стоит сверить недели с запуском рекламных кампаний и расписанием мастер-классов.");
+  } else note.textContent = "Для сравнения нужно хотя бы две полные недели с 20+ пользователями.";
+  const host = document.getElementById("cohort"), tip = document.getElementById("ctip"), box = host.closest(".chartwrap");
+  host.onmousemove = ev=>{ const t = ev.target.closest("[data-tip]"); if(!t){ tip.classList.remove("on"); return; }
+    const r = box.getBoundingClientRect(); tip.textContent = t.dataset.tip;
+    tip.style.left = (ev.clientX-r.left)+"px"; tip.style.top = (ev.clientY-r.top-6)+"px"; tip.classList.add("on"); };
+  host.onmouseleave = ()=>tip.classList.remove("on");
+}
+
 /* ---- JSON explorer ---- */
 const hl = obj => JSON.stringify(obj,null,2)
   .replace(/&/g,"&amp;").replace(/</g,"&lt;")
@@ -652,6 +744,7 @@ function render(){
   document.getElementById("f-count").textContent = nf.format(users.length)+" польз.";
   const counts = renderFunnel(users);
   renderKPI(users,counts);
+  renderCohorts(users);
   renderChannels(users);
   renderChart(users);
   renderAPI(users);
