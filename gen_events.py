@@ -1,7 +1,9 @@
-import json, random, hashlib
+import json, os, random, hashlib
 from datetime import datetime, timedelta
 
 random.seed(20260920)
+
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "events.json")
 
 CHANNELS = {
     # channel: (share, intent_mult, pay_mult)
@@ -161,7 +163,7 @@ events.sort(key=lambda e: e["ts"])
 for n, e in enumerate(events, 1):
     e["event_id"] = f"evt_{n:05d}"
 
-with open("/home/claude/events.json", "w", encoding="utf-8") as f:
+with open(OUT, "w", encoding="utf-8") as f:
     json.dump(events, f, ensure_ascii=False, separators=(",", ":"))
 
 # --- быстрая сверка воронки ---
@@ -183,4 +185,4 @@ last = sum(1 for v in users.values() if "payment_success" in v)
 print(f"end-to-end CR: {last/first*100:.2f}%")
 print("payment_failed:", sum(1 for e in events if e["event_name"] == "payment_failed"))
 import os
-print("size KB:", round(os.path.getsize("/home/claude/events.json") / 1024, 1))
+print("size KB:", round(os.path.getsize(OUT) / 1024, 1))
