@@ -37,6 +37,15 @@ PAY_ERRORS = [
     ("card_declined", 0.16),
 ]
 
+# A/B-тест на шаге «карточка → форма брони», стартует вместе с пилотом.
+# A — контроль: цена и даты видны только в форме; B — цена и ближайшие свободные даты прямо в карточке.
+# Вариант назначается детерминированно по хешу user_id (сплит 50/50), экспозиция — при открытии карточки.
+EXPERIMENT = "card_price_dates"
+B_LIFT = 1.28  # истинный эффект варианта B на переход в форму
+
+def variant_of(uid):
+    return "B" if int(hashlib.md5(f"{EXPERIMENT}:{uid}".encode()).hexdigest(), 16) % 2 else "A"
+
 BASE = {
     "event_view": 0.72,
     "booking_started": 0.48,
@@ -104,10 +113,14 @@ for i in range(N_USERS):
     add("event_view", t, uid, sess, ch, dev, city,
         {"workshop_id": ws_id, "workshop_title": ws_title, "price_kzt": price,
          "capacity": cap, "seats_left": seats_left})
+    variant = variant_of(uid)
+    add("experiment_exposed", t + timedelta(seconds=1), uid, sess, ch, dev, city,
+        {"experiment_id": EXPERIMENT, "variant": variant, "workshop_id": ws_id})
 
     # step 3: открыл форму бронирования
     t += timedelta(seconds=random.randint(20, 240))
-    if random.random() > BASE["booking_started"] * intent_m * WS_INTENT[ws_id]:
+    lift = B_LIFT if variant == "B" else 1.0
+    if random.random() > BASE["booking_started"] * intent_m * WS_INTENT[ws_id] * lift:
         continue
     add("booking_started", t, uid, sess, ch, dev, city,
         {"workshop_id": ws_id, "workshop_title": ws_title, "price_kzt": price, "seats_left": seats_left})
