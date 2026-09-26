@@ -123,6 +123,45 @@ Instagram Ads приносит больше всего трафика (187 по�
 
 Доли — от размера когорты. Последняя неделя неполная и слишком мала для выводов.
 
+## SQL-слой
+
+Те же расчёты продублированы на SQL (SQLite, CTE и оконные функции) в [`sql/queries.sql`](sql/queries.sql):
+дашборд считает на JS, а SQL независимо проверяет его цифры на тех же событиях.
+`python3 run_sql.py` выполняет запросы и сверяет 20+ чисел с README и дашбордом — воронку, каналы,
+сбои оплаты, когорты, A/B-тест; расхождение завершает скрипт с ошибкой.
+
+| Запрос | Что считает | Приёмы |
+|---|---|---|
+| `funnel` | пользователи по шагам, конверсия шага и сквозная | CTE, `LAG`, `FIRST_VALUE` |
+| `channels` | конверсия в оплату по каналам | условная агрегация `MAX(event_name = ...)` |
+| `payment_failures`, `payment_retry` | сбои по кодам ошибок, спасают ли повторные попытки | `json_extract`, `UNION ALL` с итогом |
+| `drop_reasons` | причины потерь вне оплаты | группировка по `properties.reason` |
+| `cohorts` | недельные когорты первого визита | `date(..., 'weekday 0', '-6 days')`, доля от размера когорты |
+| `ab_test` | конверсия по вариантам и z-статистика разницы долей | пулированная дисперсия прямо в SQL |
+| `user_status` | таблица по `user_id`: статус по приоритету событий | `CASE`, оконная сумма для долей |
+
+Пример: воронка одним запросом.
+
+```sql
+WITH steps(step_no, event_name, step_label) AS (
+    VALUES (1, 'catalog_view', 'Просмотр каталога'), (2, 'event_view', 'Карточка мастер-класса'),
+           (3, 'booking_started', 'Открыл форму брони'), (4, 'booking_created', 'Бронь создана'),
+           (5, 'payment_initiated', 'Начал оплату'), (6, 'payment_success', 'Оплачено')
+),
+step_users AS (
+    SELECT s.step_no, s.step_label, COUNT(DISTINCT e.user_id) AS users
+    FROM steps s LEFT JOIN events e ON e.event_name = s.event_name
+    GROUP BY s.step_no, s.step_label
+)
+SELECT step_no, step_label, users,
+       ROUND(100.0 * users / LAG(users)         OVER (ORDER BY step_no), 1) AS step_cr_pct,
+       ROUND(100.0 * users / FIRST_VALUE(users) OVER (ORDER BY step_no), 1) AS cum_cr_pct
+FROM step_users ORDER BY step_no;
+```
+
+p-value в SQLite посчитать нечем (нет функции нормального распределения), поэтому `run_sql.py` берёт
+z-статистику из запроса и считает p через `math.erfc`.
+
 ## Состав репозитория
 
 | Файл | Что это |
@@ -131,6 +170,9 @@ Instagram Ads приносит больше всего трафика (187 по�
 | `events.json` | Поток событий, 2 680 записей. |
 | `gen_events.py` | Генератор данных: вероятностная модель прохождения воронки с учётом канала, устройства, мастер-класса и варианта A/B-теста. |
 | `embed_events.py` | Вшивает `events.json` в `index.html`. |
+| `load_db.py` | Загружает `events.json` в SQLite (`funnel.db`, создаётся локально). |
+| `sql/queries.sql` | Аналитические SQL-запросы: воронка, каналы, оплаты, когорты, A/B-тест, статусы. |
+| `run_sql.py` | Выполняет запросы и сверяет результат с цифрами README и дашборда. |
 
 ## Как запустить
 
@@ -141,14 +183,18 @@ open index.html          # или просто двойной клик
 # пересобрать данные
 python3 gen_events.py    # перезапишет events.json и напечатает сверку воронки
 python3 embed_events.py  # вшить новые данные в дашборд
+
+# посчитать то же самое SQL-запросами и сверить с дашбордом
+python3 load_db.py       # events.json → funnel.db (SQLite)
+python3 run_sql.py       # результаты запросов + сверка
 ```
 
 Дашборд читает `events.json`, вшитый в сам HTML, поэтому работает без сервера — в том числе из файла.
 
 ## Стек
 
-Python (генерация и проверка расчётов), чистый HTML/CSS/JS без фреймворков и библиотек,
-GitHub Pages для публикации.
+Python (генерация данных и проверка расчётов), SQL (SQLite: CTE, оконные функции, JSON), чистый HTML/CSS/JS
+без фреймворков и библиотек, GitHub Pages для публикации.
 
 ---
 
