@@ -172,6 +172,28 @@ FROM step_users ORDER BY step_no;
 p-value в SQLite посчитать нечем (нет функции нормального распределения), поэтому `run_sql.py` берёт
 z-статистику из запроса и считает p через `math.erfc`.
 
+## Ноутбук: EDA и A/B-тест на pandas / statsmodels
+
+Третья независимая реализация тех же расчётов — [`analysis.ipynb`](analysis.ipynb): pandas вместо
+JS/SQL, `statsmodels` для A/B-теста вместо ручной формулы. Ноутбук выполнен и сохранён с выводом —
+GitHub рендерит графики прямо в репозитории, без запуска.
+
+- Таблица по `user_id` (аналог `USERS`/`user_status`), воронка с графиком, разрезы по каналам,
+  структура сбоев оплаты, тепловая карта недельных когорт (`seaborn.heatmap`).
+- A/B-тест: `statsmodels.stats.proportion.proportions_ztest` (пулированный z-тест) + ручной Wald ДИ
+  разницы долей — та же комбинация, что в дашборде и SQL; `scipy.stats.chisquare` для проверки SRM;
+  `statsmodels.stats.power.NormalIndPower` — сколько пользователей нужно на вариант, чтобы эффект на
+  оплату стал значим при мощности 80%.
+- Последняя секция сверяет ~10 чисел ноутбука с README и дашбордом (тот же принцип, что в `run_sql.py`)
+  и падает `AssertionError`, если что-то разошлось.
+
+Графики оформлены в цветах дашборда (`--accent`, `--good`, `--bad` и т.д. из `index.html`), чтобы
+ноутбук читался как продолжение того же проекта, а не отдельный стиль.
+
+`analysis.ipynb` не пишут вручную в JSON — его собирает [`build_notebook.py`](build_notebook.py)
+(ячейка за ячейкой, через `nbformat`) и затем выполняет `jupyter nbconvert`. Так проще версионировать
+структуру ноутбука через обычный питоновский файл и пересобирать его с нуля при правках.
+
 ## Состав репозитория
 
 | Файл | Что это |
@@ -184,6 +206,8 @@ z-статистику из запроса и считает p через `math.
 | `sql/queries.sql` | Аналитические SQL-запросы: воронка, каналы, оплаты, когорты, A/B-тест, статусы. |
 | `run_sql.py` | Выполняет запросы и сверяет результат с цифрами README и дашборда. |
 | `docs/screenshots/` | Скриншоты дашборда для README (сгенерированы headless-хромом, `--window-size` под ширину 1280px). |
+| `analysis.ipynb` | EDA и A/B-тест на pandas / statsmodels, выполнен и сохранён с графиками. |
+| `build_notebook.py` | Собирает `analysis.ipynb` из ячеек (`nbformat`) — источник правды для ноутбука. |
 
 ## Как запустить
 
@@ -198,14 +222,18 @@ python3 embed_events.py  # вшить новые данные в дашборд
 # посчитать то же самое SQL-запросами и сверить с дашбордом
 python3 load_db.py       # events.json → funnel.db (SQLite)
 python3 run_sql.py       # результаты запросов + сверка
+
+# пересобрать и выполнить ноутбук (нужны pandas, numpy, matplotlib, seaborn, statsmodels, scipy, nbformat)
+python3 build_notebook.py
+jupyter nbconvert --to notebook --execute --inplace analysis.ipynb
 ```
 
 Дашборд читает `events.json`, вшитый в сам HTML, поэтому работает без сервера — в том числе из файла.
 
 ## Стек
 
-Python (генерация данных и проверка расчётов), SQL (SQLite: CTE, оконные функции, JSON), чистый HTML/CSS/JS
-без фреймворков и библиотек, GitHub Pages для публикации.
+Python (генерация данных, pandas / statsmodels / seaborn для EDA и A/B-теста), SQL (SQLite: CTE,
+оконные функции, JSON), чистый HTML/CSS/JS без фреймворков и библиотек, GitHub Pages для публикации.
 
 ---
 
